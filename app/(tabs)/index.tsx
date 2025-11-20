@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
@@ -12,32 +13,30 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-
 // =========================
 // FIREBASE PLACEHOLDERS
 // =========================
 // 1) Uncomment these when you add Firebase to your project
-// import { initializeApp } from 'firebase/app';
-// import {
-//   getFirestore,
-//   collection,
-//   doc,
-//   onSnapshot,
-//   setDoc,
-//   deleteDoc,
-//   query,
-// } from 'firebase/firestore';
+import { firestore, getUserNotesCollectionPath } from '@/firebaseConfig';
+import {
+  collection,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  query,
+  setDoc
+} from 'firebase/firestore';
 
-// 2) Your firebase config (from Firebase console)
-// const firebaseConfig = { /* TODO: your config here */ };
 
-// 3) Initialize once (outside the component)
-// const app = initializeApp(firebaseConfig);
-// const db = getFirestore(app);
+const getNotesCollectionRef = (uid: string) => {
+  const path = getUserNotesCollectionPath(uid);
+  return collection(firestore, ...path);
+};
 
-// 4) Collection helper (optionally per-user)
-// const getNotesCollectionRef = (userId: string) =>
-//   collection(db, 'users', userId, 'notes');
+const getNoteDocRef = (uid: string, noteId: string) => {
+  const path = getUserNotesCollectionPath(uid);
+  return doc(firestore, ...path, noteId);
+};
 
 type ChecklistItem = {
   id: string;
@@ -128,17 +127,31 @@ const MOCK_NOTES: Note[] = [
 type FilterMode = 'active' | 'archived' | 'trash';
 type SortMode = 'newest' | 'oldest' | 'titleAsc' | 'titleDesc';
 
+
+
 const NotesHome = () => {
   const [search, setSearch] = useState('');
   const [notes, setNotes] = useState<Note[]>(MOCK_NOTES);
   const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [editorVisible, setEditorVisible] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
   const [filterMode, setFilterMode] = useState<FilterMode>('active');
   const [sortMode, setSortMode] = useState<SortMode>('newest');
 
+
+  useEffect(() => {
+  (async () => {
+    const storedUser = await AsyncStorage.getItem("user");
+    if (storedUser) {
+      const user = JSON.parse(storedUser);
+      setUserId(user);          // old code
+      setUserId(user.id);     // <-- HERE (Google UID)
+    }
+  })();
+}, []);
+
   // TODO: replace with real user id from auth
-  const userId = 'demo-user-id';
 
   const selectedNote = selectedNoteId
     ? notes.find((n) => n.id === selectedNoteId) || null
@@ -152,51 +165,51 @@ const NotesHome = () => {
     //
     // Example (pseudocode):
     //
-    // if (!userId) return;
-    // const colRef = getNotesCollectionRef(userId);
-    // const qRef = query(colRef); // you can add orderBy here
-    // const unsubscribe = onSnapshot(qRef, (snap) => {
-    //   const remoteNotes: Note[] = [];
-    //   snap.forEach((docSnap) => {
-    //     const data = docSnap.data();
-    //     remoteNotes.push({
-    //       id: docSnap.id,
-    //       title: data.title,
-    //       content: data.content,
-    //       updatedLabel: data.updatedLabel,
-    //       pinned: data.pinned,
-    //       archived: data.archived,
-    //       trashed: data.trashed,
-    //       tags: data.tags || [],
-    //       isChecklist: data.isChecklist || false,
-    //       checklist: data.checklist || [],
-    //       history: [], // you can choose to sync history or not
-    //     });
-    //   });
-    //   setNotes(remoteNotes);
-    // });
-    //
-    // return () => unsubscribe();
+    if (!userId) return;
+    const colRef = getNotesCollectionRef(userId);
+    const qRef = query(colRef); // you can add orderBy here
+    const unsubscribe = onSnapshot(qRef, (snap) => {
+      const remoteNotes: Note[] = [];
+      snap.forEach((docSnap) => {
+        const data = docSnap.data();
+        remoteNotes.push({
+          id: docSnap.id,
+          title: data.title,
+          content: data.content,
+          updatedLabel: data.updatedLabel,
+          pinned: data.pinned,
+          archived: data.archived,
+          trashed: data.trashed,
+          tags: data.tags || [],
+          isChecklist: data.isChecklist || false,
+          checklist: data.checklist || [],
+          history: [], // you can choose to sync history or not
+        });
+      });
+      setNotes(remoteNotes);
+    });
+    
+    return () => unsubscribe();
   }, [userId]);
 
   // HELPER: write a note to Firestore
   const syncNoteToFirebase = (note: Note) => {
     // When ready to sync:
     //
-    // if (!userId) return;
-    // const colRef = getNotesCollectionRef(userId);
-    // const docRef = doc(colRef, note.id);
-    // const { history, ...rest } = note; // maybe you don't sync history
-    // return setDoc(docRef, rest, { merge: true });
+    if (!userId) return;
+    const colRef = getNotesCollectionRef(userId);
+    const docRef = doc(colRef, note.id);
+    const { history, ...rest } = note; // maybe you don't sync history
+    return setDoc(docRef, rest, { merge: true });
   };
 
   const deleteNoteFromFirebase = (noteId: string) => {
     // When ready to sync deletes:
     //
-    // if (!userId) return;
-    // const colRef = getNotesCollectionRef(userId);
-    // const docRef = doc(colRef, noteId);
-    // return deleteDoc(docRef);
+    if (!userId) return;
+    const colRef = getNotesCollectionRef(userId);
+    const docRef = doc(colRef, noteId);
+    return deleteDoc(docRef);
   };
 
   // ------- helpers -------
