@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -12,6 +12,32 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+
+// =========================
+// FIREBASE PLACEHOLDERS
+// =========================
+// 1) Uncomment these when you add Firebase to your project
+// import { initializeApp } from 'firebase/app';
+// import {
+//   getFirestore,
+//   collection,
+//   doc,
+//   onSnapshot,
+//   setDoc,
+//   deleteDoc,
+//   query,
+// } from 'firebase/firestore';
+
+// 2) Your firebase config (from Firebase console)
+// const firebaseConfig = { /* TODO: your config here */ };
+
+// 3) Initialize once (outside the component)
+// const app = initializeApp(firebaseConfig);
+// const db = getFirestore(app);
+
+// 4) Collection helper (optionally per-user)
+// const getNotesCollectionRef = (userId: string) =>
+//   collection(db, 'users', userId, 'notes');
 
 type ChecklistItem = {
   id: string;
@@ -111,21 +137,85 @@ const NotesHome = () => {
   const [filterMode, setFilterMode] = useState<FilterMode>('active');
   const [sortMode, setSortMode] = useState<SortMode>('newest');
 
+  // TODO: replace with real user id from auth
+  const userId = 'demo-user-id';
+
   const selectedNote = selectedNoteId
     ? notes.find((n) => n.id === selectedNoteId) || null
     : null;
+
+  // =========================
+  // FIREBASE: SUBSCRIBE NOTES
+  // =========================
+  useEffect(() => {
+    // When you add Firebase, replace local state with Firestore subscription.
+    //
+    // Example (pseudocode):
+    //
+    // if (!userId) return;
+    // const colRef = getNotesCollectionRef(userId);
+    // const qRef = query(colRef); // you can add orderBy here
+    // const unsubscribe = onSnapshot(qRef, (snap) => {
+    //   const remoteNotes: Note[] = [];
+    //   snap.forEach((docSnap) => {
+    //     const data = docSnap.data();
+    //     remoteNotes.push({
+    //       id: docSnap.id,
+    //       title: data.title,
+    //       content: data.content,
+    //       updatedLabel: data.updatedLabel,
+    //       pinned: data.pinned,
+    //       archived: data.archived,
+    //       trashed: data.trashed,
+    //       tags: data.tags || [],
+    //       isChecklist: data.isChecklist || false,
+    //       checklist: data.checklist || [],
+    //       history: [], // you can choose to sync history or not
+    //     });
+    //   });
+    //   setNotes(remoteNotes);
+    // });
+    //
+    // return () => unsubscribe();
+  }, [userId]);
+
+  // HELPER: write a note to Firestore
+  const syncNoteToFirebase = (note: Note) => {
+    // When ready to sync:
+    //
+    // if (!userId) return;
+    // const colRef = getNotesCollectionRef(userId);
+    // const docRef = doc(colRef, note.id);
+    // const { history, ...rest } = note; // maybe you don't sync history
+    // return setDoc(docRef, rest, { merge: true });
+  };
+
+  const deleteNoteFromFirebase = (noteId: string) => {
+    // When ready to sync deletes:
+    //
+    // if (!userId) return;
+    // const colRef = getNotesCollectionRef(userId);
+    // const docRef = doc(colRef, noteId);
+    // return deleteDoc(docRef);
+  };
 
   // ------- helpers -------
 
   const setNotesAndKeepSelection = (updater: (prev: Note[]) => Note[]) => {
     setNotes((prev) => {
       const next = updater(prev);
+
+      // make sure selection still exists
       if (selectedNoteId) {
         const stillExists = next.some((n) => n.id === selectedNoteId && !n.trashed);
         if (!stillExists) {
           setSelectedNoteId(null);
         }
       }
+
+      // FIREBASE: batch-sync notes if you want
+      // next.forEach((n) => syncNoteToFirebase(n));
+
       return next;
     });
   };
@@ -143,6 +233,13 @@ const NotesHome = () => {
           : note
       )
     );
+
+    // FIREBASE: sync updated note
+    const updated = notes.find((n) => n.id === selectedNoteId);
+    if (updated) {
+      const merged: Note = { ...updated, ...changes, updatedLabel: 'Just now' };
+      syncNoteToFirebase(merged);
+    }
   };
 
   const pushHistorySnapshot = () => {
@@ -199,7 +296,6 @@ const NotesHome = () => {
         case 'titleDesc':
           return b.title.localeCompare(a.title);
         case 'oldest':
-          // crude: by id (string), older ones had smaller ids in MOCK, new notes use Date.now
           return a.id.localeCompare(b.id);
         case 'newest':
         default:
@@ -233,6 +329,9 @@ const NotesHome = () => {
     setNotes((prev) => [newNote, ...prev]);
     setSelectedNoteId(newNote.id);
     setEditorVisible(true);
+
+    // FIREBASE: create note in Firestore
+    syncNoteToFirebase(newNote);
   };
 
   const handleSelectNote = (noteId: string) => {
@@ -256,7 +355,12 @@ const NotesHome = () => {
 
   const handleTrash = () => {
     if (!selectedNote) return;
+    // If you want hard delete when trashing again, you can call deleteNoteFromFirebase here.
     updateSelectedNote({ trashed: !selectedNote.trashed, archived: false });
+    // Example hard delete:
+    // if (selectedNote.trashed) {
+    //   deleteNoteFromFirebase(selectedNote.id);
+    // }
   };
 
   const handleRestoreFromTrash = () => {
@@ -275,7 +379,6 @@ const NotesHome = () => {
   const handleToggleChecklistMode = () => {
     if (!selectedNote) return;
     if (!selectedNote.isChecklist) {
-      // text -> checklist: simple split by lines
       const lines = selectedNote.content.split('\n').filter((l) => l.trim());
       const checklist: ChecklistItem[] = lines.map((text, idx) => ({
         id: `${selectedNote.id}-chk-${idx}-${Date.now()}`,
@@ -285,10 +388,9 @@ const NotesHome = () => {
       updateSelectedNote({
         isChecklist: true,
         checklist,
-        content: selectedNote.content, // keep content for history
+        content: selectedNote.content,
       });
     } else {
-      // checklist -> text
       const joined = selectedNote.checklist.map((c) => c.text).join('\n');
       updateSelectedNote({
         isChecklist: false,
@@ -353,7 +455,6 @@ const NotesHome = () => {
 
   const closeEditor = () => {
     if (selectedNote) {
-      // push snapshot before closing (simple version history)
       const snapshot: NoteSnapshot = {
         title: selectedNote.title,
         content: selectedNote.content,
@@ -406,7 +507,6 @@ const NotesHome = () => {
           </Text>
         )}
 
-        {/* tags */}
         {item.tags.length > 0 && (
           <View style={styles.tagsRow}>
             {item.tags.map((tag) => (
@@ -530,7 +630,6 @@ const NotesHome = () => {
           <View style={styles.modalContent}>
             {selectedNote ? (
               <>
-                {/* top badges: pin, archive, trash */}
                 <View style={styles.modalTopRow}>
                   <TouchableOpacity onPress={handleTogglePin}>
                     <Text style={styles.modalActionText}>
@@ -557,7 +656,6 @@ const NotesHome = () => {
                   )}
                 </View>
 
-                {/* tags input */}
                 <Text style={styles.modalLabel}>Tags (comma separated)</Text>
                 <TextInput
                   value={selectedNote.tags.join(', ')}
@@ -567,7 +665,6 @@ const NotesHome = () => {
                   placeholderTextColor="#aaa"
                 />
 
-                {/* heading / bullet helpers (simple rich text helpers) */}
                 <View style={styles.formatRow}>
                   <TouchableOpacity style={styles.formatChip} onPress={handleApplyHeading}>
                     <Text style={styles.formatChipText}>H1</Text>
@@ -594,7 +691,6 @@ const NotesHome = () => {
                   )}
                 </View>
 
-                {/* title */}
                 <Text style={[styles.modalLabel, { marginTop: 4 }]}>Title</Text>
                 <TextInput
                   value={selectedNote.title}
@@ -604,7 +700,6 @@ const NotesHome = () => {
                   placeholderTextColor="#aaa"
                 />
 
-                {/* content / checklist */}
                 <Text style={[styles.modalLabel, { marginTop: 12 }]}>
                   {selectedNote.isChecklist ? 'Checklist' : 'Content'}
                 </Text>
